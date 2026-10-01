@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Convolve — Trajectory Inspector</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #131a33;
+    --panel-2: #1b2344;
+    --text: #e7ecff;
+    --muted: #9aa3c7;
+    --accent: #6ee7ff;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --border: #26315c;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 20px 28px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: linear-gradient(180deg, #101733, #0b1020);
+  }
+  header h1 { font-size: 20px; margin: 0; letter-spacing: 0.3px; }
+  header .tag {
+    font-size: 12px; padding: 3px 8px; border-radius: 999px;
+    background: var(--panel-2); color: var(--accent); border: 1px solid var(--border);
+  }
+  header .spacer { flex: 1; }
+  header input, header button {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; font-size: 14px;
+  }
+  header input { width: 300px; font-family: var(--mono); }
+  header button { cursor: pointer; }
+  header button:hover { border-color: var(--accent); color: var(--accent); }
+  main { padding: 24px 28px; display: grid; grid-template-columns: 360px 1fr; gap: 24px; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  }
+  .panel h2 {
+    margin: 0; padding: 12px 16px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--muted);
+    background: var(--panel-2); border-bottom: 1px solid var(--border);
+  }
+  .panel .body { padding: 16px; }
+  .metric { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
+  .metric .k { color: var(--muted); }
+  .metric .v { font-family: var(--mono); }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge.open { background: rgba(110,231,255,0.15); color: var(--accent); }
+  .badge.ended { background: rgba(154,163,199,0.15); color: var(--muted); }
+  .badge.continue { background: rgba(52,211,153,0.15); color: var(--ok); }
+  .badge.abstain { background: rgba(248,113,113,0.15); color: var(--bad); }
+  .progress {
+    height: 8px; background: var(--panel-2); border-radius: 999px; overflow: hidden;
+    margin-top: 6px; margin-bottom: 16px;
+  }
+  .progress > div { height: 100%; background: var(--accent); transition: width 200ms; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+  td.mono { font-family: var(--mono); font-size: 12px; }
+  td.num { font-family: var(--mono); text-align: right; }
+  tr.error td { background: rgba(248,113,113,0.06); }
+  tr.abstain td { background: rgba(248,113,113,0.12); }
+  pre {
+    background: #0a0f1f; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; font-family: var(--mono); font-size: 12px; overflow: auto;
+    max-height: 240px; margin: 0;
+  }
+  .muted { color: var(--muted); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .pb-row { padding: 12px; border-bottom: 1px solid var(--border); }
+  .pb-row:last-child { border-bottom: none; }
+  .pb-row .name { color: var(--accent); font-size: 13px; margin-bottom: 4px; }
+  .pb-row .rule { font-size: 13px; margin-bottom: 6px; }
+  .pb-row .sim { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Convolve</h1>
+  <span class="tag">trajectory inspector</span>
+  <div class="spacer"></div>
+  <input id="sid" placeholder="session id" autocomplete="off" />
+  <button id="load">Load</button>
+  <button id="refresh">Refresh</button>
+</header>
+<main>
+  <section class="panel" id="summary">
+    <h2>Session</h2>
+    <div class="body" id="summary-body">
+      <div class="empty">Enter a session id and click Load.</div>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Steps</h2>
+    <div id="steps-body">
+      <div class="empty">No session loaded.</div>
+    </div>
+  </section>
+</main>
+<script>
+const API = location.origin;
+let currentSid = null;
+
+function h(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
+function esc(s) { return (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function loadSession() {
+  const sid = document.getElementById('sid').value.trim();
+  if (!sid) return;
+  currentSid = sid;
+  const res = await fetch(`${API}/v1/sessions/${encodeURIComponent(sid)}`);
+  if (!res.ok) {
+    document.getElementById('summary-body').innerHTML = `<div class="empty">Session not found.</div>`;
+    document.getElementById('steps-body').innerHTML = `<div class="empty">—</div>`;
+    return;
+  }
+  const data = await res.json();
+  renderSummary(data);
+  renderSteps(data);
+  await renderPlaybooks(sid);
+}
+
+function renderSummary(s) {
+  const spent = s.budget > 0 ? Math.min(100, (s.spent / s.budget) * 100) : 0;
+  const body = document.getElementById('summary-body');
+  body.innerHTML = `
+    <div class="metric"><span class="k">Task</span></div>
+    <div style="margin-bottom:12px">${esc(s.task)}</div>
+    <div class="metric"><span class="k">Status</span><span class="badge ${esc(s.status)}">${esc(s.status)}</span></div>
+    <div class="metric"><span class="k">Outcome</span><span class="v">${esc(s.outcome ?? '—')}</span></div>
+    <div class="metric"><span class="k">Steps</span><span class="v">${s.steps.length} / ${s.max_steps}</span></div>
+    <div class="metric"><span class="k">Cost</span><span class="v">${s.spent.toFixed(4)} / ${s.budget.toFixed(2)}</span></div>
+    <div class="progress"><div style="width:${spent}%"></div></div>
+    <div class="metric"><span class="k">Threshold</span><span class="v">${s.threshold.toFixed(2)}</span></div>
+  `;
+}
+
+function renderSteps(s) {
+  const wrap = document.getElementById('steps-body');
+  if (!s.steps.length) {
+    wrap.innerHTML = `<div class="empty">No steps recorded.</div>`;
+    return;
+  }
+  const rows = s.steps.map(st => {
+    const prob = st.stop_probability == null ? '—' : st.stop_probability.toFixed(3);
+    const thr = st.threshold_used == null ? '—' : st.threshold_used.toFixed(2);
+    const cls = st.decision === 'abstain' ? 'abstain' : (st.is_error ? 'error' : '');
+    return `
+      <tr class="${cls}">
+        <td class="num">${st.idx}</td>
+        <td>${esc(st.action)}</td>
+        <td class="num">${prob}</td>
+        <td class="num">${thr}</td>
+        <td><span class="badge ${esc(st.decision ?? '')}">${esc(st.decision ?? '—')}</span></td>
+        <td>${esc(st.reason ?? '—')}</td>
+      </tr>
+      <tr class="${cls}">
+        <td></td>
+        <td colspan="5">
+          <details>
+            <summary class="muted">thought &amp; observation</summary>
+            <div style="margin-top:6px">
+              <div class="muted" style="font-size:12px">thought</div>
+              <pre>${esc(st.thought)}</pre>
+              <div class="muted" style="font-size:12px;margin-top:8px">input</div>
+              <pre>${esc(JSON.stringify(st.action_input, null, 2))}</pre>
+              <div class="muted" style="font-size:12px;margin-top:8px">observation</div>
+              <pre>${esc(st.observation ?? '(pending)')}</pre>
+            </div>
+          </details>
+        </td>
+      </tr>
+    `;
+  }).join('');
+  wrap.innerHTML = `
+    <table>
+      <thead><tr>
+        <th style="width:40px">#</th><th>Action</th><th style="width:80px">P(stop)</th>
+        <th style="width:70px">Thr</th><th style="width:100px">Decision</th><th>Reason</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function renderPlaybooks(sid) {
+  const res = await fetch(`${API}/v1/tasks/${encodeURIComponent(sid)}/playbooks`);
+  if (!res.ok) return;
+  const data = await res.json();
+  let panel = document.getElementById('playbook-panel');
+  if (!panel) {
+    panel = h(`<section class="panel" id="playbook-panel" style="grid-column: 1 / -1">
+      <h2>Suggested playbooks</h2><div class="body" id="playbook-body"></div></section>`);
+    document.querySelector('main').appendChild(panel);
+  }
+  const body = document.getElementById('playbook-body');
+  if (!data.suggestions.length) {
+    body.innerHTML = `<div class="empty">No matching playbooks yet. Run the distiller to generate some.</div>`;
+    return;
+  }
+  body.innerHTML = data.suggestions.map(s => `
+    <div class="pb-row">
+      <div class="name">${esc(s.name)} <span class="sim">· similarity ${s.similarity.toFixed(3)}</span></div>
+      <div class="rule">${esc(s.rule_text)}</div>
+      <details><summary class="muted">prompt snippet</summary><pre>${esc(s.prompt_snippet)}</pre></details>
+    </div>
+  `).join('');
+}
+
+document.getElementById('load').addEventListener('click', loadSession);
+document.getElementById('refresh').addEventListener('click', () => { if (currentSid) loadSession(); });
+document.getElementById('sid').addEventListener('keydown', e => { if (e.key === 'Enter') loadSession(); });
+</script>
+</body>
+</html>

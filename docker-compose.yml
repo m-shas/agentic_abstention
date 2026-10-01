@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: convolve
+      POSTGRES_PASSWORD: convolve
+      POSTGRES_DB: convolve
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U convolve"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  convolve:
+    build: .
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    environment:
+      CONVOLVE_ENV: production
+      CONVOLVE_DATABASE_URL: postgresql+asyncpg://convolve:convolve@postgres:5432/convolve
+      CONVOLVE_REDIS_URL: redis://redis:6379/0
+      CONVOLVE_DEFAULT_THRESHOLD: "0.70"
+    ports: ["8000:8000"]
+    volumes:
+      - "./artifacts:/app/artifacts"
+      - "./data:/app/data"
+    command: >
+      sh -c "convolve init-db && convolve serve"
+
+volumes:
+  pgdata:
+  redisdata:
